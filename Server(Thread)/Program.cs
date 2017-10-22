@@ -10,9 +10,11 @@ using System.IO; //StreamReader,StreamWriter 생성에 필요함
 using System.Threading; // Thread 생성에 필요함
 using System.Data.SqlClient; // mysql 필요함
 using System.Data;
+using MySql.Data.MySqlClient; //mysql
 
 namespace Server_Thread_
 {
+    
     class Receiver
     {
         NetworkStream NS = null;
@@ -20,59 +22,138 @@ namespace Server_Thread_
         StreamWriter SW = null;
         TcpClient client;
 
-        private object locker = new object();
-        private void dbConnect()
+        int tablenum = 0; // 0 이면 user Table, 1이면 ui Table
+        int dbid = 1000;
+        int photonum = 1;
+
+        private void dbConnect(string dataq)
         {
-
-            lock (locker)
-            {
-                string serverDomain = "wnsfox@192.168.153.1";
-                string schema = "mydb";
-
-                string strDBConn = String.Format("Server={0};Database={1};Uid=mellorin;Pwd=tjqjtjqj;", serverDomain, schema);
-                MySqlConnection dbConn = new MySqlConnection(strDBConn);
-                dbConn.Open();
-
-                string dbQuery = String.Format("select pw from temp where id = '{0}'", "asdf");
-
-                DataSet dbDataSet = new DataSet();
-                MySqlDataAdapter dbAdapter = new MySqlDataAdapter(dbQuery, dbConn);
-                dbAdapter.Fill(dbDataSet, "temp");
-
-                if (dbDataSet.Tables[0].Rows.Count != 0)
+            dbid=idProduce(); // DB id난수로 생성후 사용
+            switch  (tablenum)
                 {
-                    string pw = (string)dbDataSet.Tables[0].Rows[0]["pw"];
-                    Console.WriteLine("값 찾음 pw = {0}", pw);
-                }
-                else
-                {
-                    string insertQuery = String.Format("insert into data (uuid,token) values ('{0}','{1}');", uuid, token);
-                    MySqlCommand cmd = new MySqlCommand(insertQuery, dbConn);
-                    cmd.ExecuteNonQuery();
-                    Console.WriteLine("못 찾음");
+                    case 0: // 사용자 등록(device->server)
+                    {
+                        Console.WriteLine("진입실패");
+                        MySqlCommand cmd = new MySqlCommand(String.Format("INSERT INTO user VALUES ('{0}','{1}','{2}')"
+                            ,dbid, dataq, photonum),Program.CONN);
+                        cmd.ExecuteNonQuery();
+                        dbid++;
+                        photonum++;
+                         break;
+                    }
 
-                }
+                case 1: // 판별 (device -> 서버(중개) -> openCV)
+                    {
+                        Console.WriteLine("진입1");
+                        char d1; // id
+                        char d2; // photonum
+                        dataq.Split('/');
+                        d1 = dataq[1]; // id
+                        d2 = dataq[2]; // photonum
+     
 
-                dbConn.Close();
+                        MySqlCommand cmd2 = new MySqlCommand
+                            (String.Format("select {0} from user where id='{1}' ", d2, d1), Program.CONN);
+
+                        MySqlDataReader reader = cmd2.ExecuteReader();
+                        
+                        string send = string.Empty;
+                        Console.WriteLine("진입2");
+                        if (reader.HasRows)
+                        {
+                            while (reader.Read())
+                            {
+
+                                Console.Write(reader["id"]);
+                                Console.Write(reader["name"]);
+                                Console.WriteLine(reader["photonum"]);
+                                string temp;
+                                temp = d2.ToString(); // photonum 비교
+                                if (temp == reader.GetString(1))
+                                    send = "true";
+
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine("본인이 아닙니다.");
+                            send = "false";
+                        }
+                        reader.Close();     
+                     
+                        SW.WriteLine("1{0}", send); // 1번 tablenum 실행했으니 그대로 보내줌
+                        SW.Flush();
+
+                        /*
+                         SqlDataAdapter datainput = new SqlDataAdapter
+                           (String.Format("select {0} from user where id='{1}' ", d1, d2), strConn);
+                        
+                        DataSet dbDataSet = new DataSet();
+                        datainput.Fill(dbDataSet);
+                        */
+
+                        break;
+                    }
+                    
+
+                    default:
+                    {
+                        break;
+                    }
+
             }
+            // string dbQuery = String.Format("select id from user = '{0}'", "asdf");
+            //  string dbQuery = String.Format("select pw from temp where id = '{0}'", "asdf");
+
+           // DataSet dbDataSet = new DataSet();
+
+            
+            //cmd.ExecuteNonQuery();
+                
+            
+        }
+       
+        public int idProduce() // id 난수생성 (1001 ~ 4999)
+        {
+           
+            Random idnum = new Random();
+            return idnum.Next(1001, 5000);
         }
 
         public string CheckByte(string b1) // 첫번째 바이트 검사
         {
+            
             string temp;
-            char []tempS = b1.ToArray();
-
+            char []tempS = b1.ToArray();           
             if (tempS[0] == '0')
+            {
+               
+                tablenum = 0;
                 return temp = b1.Substring(1);
+            }
 
             else if (tempS[1] == '1')
+            { 
+                tablenum = 1;
                 return temp = b1.Substring(1);
+            }
 
-            else return "";
-     
+            else
+            { 
+                tablenum = 2;
+                return "";
+            }
+
         }
 
-        
+        public char ByteSplit(string b1) // 데이터 쪼개기
+        {
+            b1.Split('/');
+            char temp = b1[0];
+            return temp; 
+        }
+
+
         public void startClient(TcpClient clientSocket)
         {
                 client = clientSocket;
@@ -95,17 +176,21 @@ namespace Server_Thread_
                 {
                     GetMessage = SR.ReadLine();
 
-                    CheckByte(GetMessage);
-          
+                    dbConnect(CheckByte(GetMessage));
+
                     //SW.WriteLine("Server: {0} [{1}]", GetMessage, DateTime.Now); // 메시지 보내기
                     //SW.Flush();
                     Console.WriteLine("Client : {0} [{1}]", GetMessage, DateTime.Now);
 
+                    
+
+                    /* 임시로 통신확인할때 
                     Console.Write("Server -> client한테 보낼 메세지 : ");
                     SendMessage = Console.ReadLine();
                     SW.WriteLine("Server: {0} [{1}]", SendMessage, DateTime.Now);
                     SW.Flush();
                     Console.WriteLine();
+                    */
 
                 }
             }
@@ -126,7 +211,7 @@ namespace Server_Thread_
 
     class Program
     {
-        
+        public static MySqlConnection CONN;
         static void Main(string[] args)
         {
             /*
@@ -137,6 +222,20 @@ namespace Server_Thread_
                 return;
             }
             */
+           
+            string strConn = "Server=localhost;Database=mydb;Uid=root;Pwd=s8727080;";
+
+            MySqlConnection conn = new MySqlConnection(strConn);
+            try
+            {
+                conn.Open();
+            }
+            catch(NotImplementedException e)
+            {
+                Console.WriteLine(e);
+            }
+            
+            CONN = conn;
 
             Console.WriteLine(args.ToString());
             string bindIp = "127.0.0.1";//args[0];
@@ -163,26 +262,7 @@ namespace Server_Thread_
                     Receiver r = new Receiver();
                     r.startClient(client);
 
-                    /*
-                    NetworkStream stream = client.GetStream();
-
-                    int length;
-                    string data = "";
-                    byte[] bytes = new byte[256];
-
-                    while ((length = stream.Read(bytes, 0, bytes.Length)) != 0)
-                    {
-                        data = Encoding.Default.GetString(bytes, 0, length);
-                        Console.WriteLine("수신: {0}", data);
-
-                        byte[] msg = Encoding.Default.GetBytes(data);
-                        stream.Write(msg, 0, msg.Length);
-                        Console.WriteLine("송신 : {0}", data);
-                    }
-
-                    stream.Close();
-                    client.Close();
-                    */
+                  
                 }
 
             }
@@ -196,6 +276,7 @@ namespace Server_Thread_
             }
 
             Console.WriteLine("서버를 종료합니다.");
+            CONN.Close();
         }
 
 
